@@ -192,3 +192,178 @@ You've now created a custom mini compiler pipeline that:
 A perfect sandbox to learn how languages talk to hardware! 🔧💡
 
 Let me know if you'd like a visual flowchart or want to extend this to handle other expressions!
+If you want to add a custom instruction to a compiler, you typically need to modify the LLVM backend or GCC backend, depending on the compiler you’re working with. Below, I’ll break down the specific steps for LLVM (since it's more modular and widely used for custom instruction modifications).
+
+
+---
+
+Modifying the LLVM Backend for a Custom Instruction
+
+Step 1: Set Up LLVM for Development
+
+1. Clone the LLVM repository:
+
+git clone https://github.com/llvm/llvm-project.git
+cd llvm-project
+
+
+2. Build LLVM:
+
+mkdir build && cd build
+cmake -G "Ninja" ../llvm -DLLVM_ENABLE_PROJECTS="clang" -DCMAKE_BUILD_TYPE=Debug
+ninja
+
+
+
+
+---
+
+Step 2: Define the Custom Instruction in LLVM Backend
+
+1. Locate the Target Backend in LLVM
+
+LLVM has a directory for each target architecture inside:
+
+llvm/lib/Target/<YourTarget>/
+
+For example, if you are modifying the X86 backend, go to:
+
+llvm/lib/Target/X86/
+
+If you’re working on a new processor, you may need to define a new backend.
+
+
+---
+
+2. Modify the Target’s Instruction Definitions (.td File)
+
+Open XXXInstrFormats.td (for X86, it’s X86InstrFormats.td).
+
+Add a new instruction for the equation .
+
+
+Example for a MULADD instruction:
+
+def MULADD : Instruction {
+  let Opcode = 0xAB; // Assign an unused opcode
+  let Format = (outs GR32:$dst), (ins GR32:$src1, GR32:$src2, GR32:$src3, GR32:$src4);
+  let AsmString = "muladd $dst, $src1, $src2, $src3, $src4";
+  let Constraints = "$dst = $src1";
+}
+
+This defines:
+
+MULADD dst, src1, src2, src3, src4
+
+Computes: dst = (src1 * src2) + (src3 * src4)
+
+
+
+---
+
+3. Modify the Instruction Selection (ISel) File
+
+In:
+
+llvm/lib/Target/<YourTarget>/<YourTarget>ISelDAGToDAG.cpp
+
+Find the instruction selection logic and add pattern matching:
+
+if (Node->getOpcode() == ISD::ADD) {
+    SDValue Mul1 = Node->getOperand(0);
+    SDValue Mul2 = Node->getOperand(1);
+
+    if (Mul1.getOpcode() == ISD::MUL && Mul2.getOpcode() == ISD::MUL) {
+        ReplaceNode(Node, CurDAG->getMachineNode(TargetOpcode::MULADD,
+                  DL, VT, Mul1.getOperand(0), Mul1.getOperand(1),
+                  Mul2.getOperand(0), Mul2.getOperand(1)));
+        return;
+    }
+}
+
+This matches (A * B) + (C * D) and replaces it with MULADD.
+
+
+---
+
+4. Define the Encoding for the Instruction
+
+Modify:
+
+llvm/lib/Target/<YourTarget>/<YourTarget>MCInstrDesc.td
+
+Add:
+
+let Opcode = 0xAB, Size = 4, Encoding = [0xAB, $dst, $src1, $src2, $src3, $src4];
+
+
+---
+
+5. Modify the Assembler & Disassembler
+
+Assembler: Define parsing logic in:
+
+llvm/lib/Target/<YourTarget>/<YourTarget>AsmParser.cpp
+
+Example:
+
+if (Mnemonic == "muladd") {
+    Operands.push_back(Inst.getOperand(0));
+    return Match_Mnemonic_Success;
+}
+
+Disassembler: Modify:
+
+llvm/lib/Target/<YourTarget>/<YourTarget>Disassembler.cpp
+
+Example:
+
+case 0xAB:
+    Inst.setOpcode(TargetOpcode::MULADD);
+    break;
+
+
+
+---
+
+Step 3: Rebuild LLVM & Test the Instruction
+
+1. Recompile LLVM:
+
+ninja
+
+
+2. Test using llc (LLVM’s assembly generator):
+
+llc -march=<YourTarget> test.ll -o test.s
+
+Where test.ll contains:
+
+define i32 @test(i32 %a, i32 %b, i32 %c, i32 %d) {
+    %1 = mul i32 %a, %b
+    %2 = mul i32 %c, %d
+    %3 = add i32 %1, %2
+    ret i32 %3
+}
+
+
+
+Verify that the output assembly contains muladd instead of separate mul and add.
+
+
+
+---
+
+Step 4: Benchmark & Optimize
+
+Run the compiled binary and check performance improvements.
+
+Use llvm-mca to analyze instruction execution latency.
+
+
+
+---
+
+Conclusion
+
+By following these steps, you integrate a custom instruction into LLVM, allowing your compiler to optimize specific equations. Let me know if you need help with any step! 🚀
